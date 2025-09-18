@@ -4,10 +4,14 @@ require('dotenv').config();
 // 1. استدعاء المكتبات اللازمة
 const express = require('express');
 const axios = require('axios');
+const cors = require('cors');
 
 // 2. إعداد تطبيق Express
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// --- [إعداد] تفعيل CORS للسماح بالطلبات من نطاقات أخرى (مثل Netlify) ---
+app.use(cors());
 
 // --- بيانات اعتماد جوجل من Environment Variables ---
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
