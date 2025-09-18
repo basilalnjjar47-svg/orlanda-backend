@@ -7,19 +7,20 @@ const axios = require('axios');
 
 // 2. إعداد تطبيق Express
 const app = express();
-// Render.com ستقوم بتحديد المنفذ تلقائياً
+// Render.com يحدد المنفذ تلقائياً
 const PORT = process.env.PORT || 3000;
 
-// --- بيانات اعتماد جوجل من ملف .env ---
+// --- بيانات اعتماد جوجل من متغيرات البيئة ---
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 
-// هذا هو الرابط الذي سيعود إليه المستخدم من جوجل (سيتم تحديثه لاحقاً برابط Render)
-const REDIRECT_URI = 'https://courageous-dasik-c7cadd.netlify.app/auth/google/callback';
+// الرابط الخارجي للسيرفر (Render)
+const REDIRECT_URI = process.env.RENDER_EXTERNAL_URL
+  ? `${process.env.RENDER_EXTERNAL_URL}/auth/google/callback`
+  : 'https://orlanda-backend.onrender.com/auth/google/callback';
 
-// 3. إنشاء نقطة النهاية (Endpoint) التي ستستقبل المستخدم بعد تسجيل الدخول في جوجل
+// 3. نقطة النهاية لتسجيل الدخول عبر Google
 app.get('/auth/google/callback', async (req, res) => {
-    // الحصول على الكود المؤقت الذي أرسلته جوجل
     const code = req.query.code;
 
     if (!code) {
@@ -27,21 +28,20 @@ app.get('/auth/google/callback', async (req, res) => {
     }
 
     try {
-        // --- الخطوة أ: استبدال الكود المؤقت بـ Access Token ---
+        // استبدال الكود المؤقت بـ Access Token
         const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', null, {
             params: {
                 code: code,
                 client_id: GOOGLE_CLIENT_ID,
                 client_secret: GOOGLE_CLIENT_SECRET,
-                // ملاحظة: هذا الرابط يجب أن يكون مطابقاً تماماً للرابط الذي سنضعه في Render لاحقاً
-                redirect_uri: process.env.RENDER_EXTERNAL_URL ? `${process.env.RENDER_EXTERNAL_URL}/auth/google/callback` : REDIRECT_URI,
+                redirect_uri: REDIRECT_URI,
                 grant_type: 'authorization_code',
             },
         });
 
         const { access_token } = tokenResponse.data;
 
-        // --- الخطوة ب: استخدام الـ Access Token لجلب بيانات المستخدم ---
+        // استخدام الـ Access Token لجلب بيانات المستخدم
         const profileResponse = await axios.get('https://www.googleapis.com/oauth2/v1/userinfo', {
             headers: {
                 Authorization: `Bearer ${access_token}`,
@@ -53,8 +53,7 @@ app.get('/auth/google/callback', async (req, res) => {
 
         console.log(`User Logged In: ${userName}`);
 
-        // --- الخطوة ج: إعادة توجيه المستخدم إلى موقعك على Netlify ---
-        // نرسل اسم المستخدم في الرابط ليتم عرضه في الواجهة الأمامية
+        // إعادة توجيه المستخدم إلى موقعك على Netlify
         const encodedName = encodeURIComponent(userName);
         res.redirect(`https://courageous-dasik-c7cadd.netlify.app?login=success&userName=${encodedName}`);
 
