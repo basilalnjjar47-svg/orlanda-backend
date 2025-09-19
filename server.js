@@ -55,8 +55,16 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
-// --- جديد: مخزن مؤقت في الذاكرة لحفظ أكواد التحقق ---
-const otpStore = {};
+// --- تعديل: استخدام قاعدة البيانات لتخزين أكواد التحقق بدلاً من الذاكرة ---
+const otpSchema = new mongoose.Schema({
+    email: { type: String, required: true, lowercase: true },
+    code: { type: String, required: true },
+    type: { type: String, required: true, enum: ['google_2fa', 'email_verify'] },
+    payload: { type: mongoose.Schema.Types.Mixed }, // لتخزين بيانات المستخدم المؤقتة
+    // سيقوم MongoDB بحذف هذا المستند تلقائياً بعد 10 دقائق
+    createdAt: { type: Date, default: Date.now, expires: '10m' } 
+});
+const Otp = mongoose.model('Otp', otpSchema);
 
 // --- جديد: إعداد خدمة إرسال البريد (Nodemailer) ---
 const transporter = nodemailer.createTransport({
@@ -86,7 +94,7 @@ async function sendOtpEmail(email, otp) {
 
 // --- نقاط النهاية الخاصة بالمصادقة (Authentication Endpoints) ---
 
-// 1. نقطة نهاية جوجل (--- تعديل لإضافة التحقق بالكود ---)
+// 1. نقطة نهاية جوجل (--- تعديل لاستخدام قاعدة البيانات بدلاً من الذاكرة ---)
 app.get('/auth/google/callback', async (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).send('Error: Google code not received.');
@@ -102,13 +110,17 @@ app.get('/auth/google/callback', async (req, res) => {
     });
     const { id, name, email, picture } = profileResponse.data;
 
+    // حذف أي كود تحقق قديم لهذا البريد الإلكتروني
+    await Otp.deleteMany({ email });
+
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    otpStore[email] = {
-        type: 'google_2fa',
+    // حفظ الكود وبيانات المستخدم المؤقتة في قاعدة البيانات
+    await Otp.create({
+        email,
         code: otp,
-        userData: { id, name, email, picture },
-        timestamp: Date.now()
-    };
+        type: 'google_2fa',
+        payload: { id, name, email, picture }
+    });
     console.log(`Generated OTP ${otp} for Google user ${email}`);
 
     await sendOtpEmail(email, otp);
@@ -160,7 +172,7 @@ app.get('/auth/facebook/callback', async (req, res) => {
     }
 });
 
-// --- جديد: نقطة نهاية لإنشاء حساب يدوي (الخطوة الأولى) ---
+// --- تعديل: نقطة نهاية لإنشاء حساب يدوي (الخطوة الأولى) ---
 app.post('/auth/register', async (req, res) => {
     try {
         const { name, email, password, dob } = req.body;
@@ -176,13 +188,17 @@ app.post('/auth/register', async (req, res) => {
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
+        // حذف أي كود تحقق قديم لهذا البريد الإلكتروني
+        await Otp.deleteMany({ email });
+
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        otpStore[email] = {
-            type: 'email_verify',
+        // حفظ الكود وبيانات المستخدم المؤقتة في قاعدة البيانات
+        await Otp.create({
+            email,
             code: otp,
-            userData: { name, email, password: hashedPassword, dob },
-            timestamp: Date.now()
-        };
+            type: 'email_verify',
+            payload: { name, email, password: hashedPassword, dob }
+        });
         console.log(`Generated OTP ${otp} for new user registration ${email}`);
 
         await sendOtpEmail(email, otp);
@@ -221,7 +237,7 @@ app.post('/auth/login', async (req, res) => {
     }
 });
 
-// --- جديد: نقطة نهاية موحدة للتحقق من الكود ---
+// --- تعديل: نقطة نهاية موحدة للتحقق من الكود (باستخدام قاعدة البيانات) ---
 app.post('/verify-otp', async (req, res) => {
     try {
         const { email, code } = req.body;
@@ -229,24 +245,27 @@ app.post('/verify-otp', async (req, res) => {
             return res.status(400).json({ success: false, message: 'البريد الإلكتروني والكود مطلوبان.' });
         }
 
-        const storedData = otpStore[email];
-        if (!storedData || storedData.code !== code || (Date.now() - storedData.timestamp > 10 * 60 * 1000)) {
+        // البحث عن الكود في قاعدة البيانات
+        const otpDoc = await Otp.findOne({ email, code });
+
+        // إذا لم يتم العثور على الكود، فهذا يعني أنه غير صحيح أو انتهت صلاحيته (تم حذفه تلقائياً)
+        if (!otpDoc) {
             return res.status(400).json({ success: false, message: 'الكود غير صحيح أو انتهت صلاحيته.' });
         }
 
         let user;
-        const { userData } = storedData;
+        const { payload } = otpDoc;
 
-        if (storedData.type === 'email_verify') {
+        if (otpDoc.type === 'email_verify') {
             user = new User({
-                name: userData.name, email: userData.email, password: userData.password,
-                dob: userData.dob, provider: 'email'
+                name: payload.name, email: payload.email, password: payload.password,
+                dob: payload.dob, provider: 'email'
             });
             await user.save();
-        } else if (storedData.type === 'google_2fa') {
+        } else if (otpDoc.type === 'google_2fa') {
             user = await User.findOneAndUpdate(
-              { email: userData.email },
-              { $setOnInsert: { name: userData.name, email: userData.email, picture: userData.picture, provider: 'google', providerId: userData.id } },
+              { email: payload.email },
+              { $setOnInsert: { name: payload.name, email: payload.email, picture: payload.picture, provider: 'google', providerId: payload.id } },
               { upsert: true, new: true, runValidators: true }
             );
         } else {
@@ -254,7 +273,7 @@ app.post('/verify-otp', async (req, res) => {
         }
 
         const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '7d' });
-        delete otpStore[email];
+        await Otp.deleteOne({ _id: otpDoc._id }); // حذف الكود المستخدم من قاعدة البيانات
         res.json({ success: true, token, userName: user.name });
 
     } catch (error) {
@@ -266,7 +285,7 @@ app.post('/verify-otp', async (req, res) => {
     }
 });
 
-// --- جديد: نقطة نهاية لإعادة إرسال الكود ---
+// --- تعديل: نقطة نهاية لإعادة إرسال الكود (باستخدام قاعدة البيانات) ---
 app.post('/auth/resend-otp', async (req, res) => {
     try {
         const { email } = req.body;
@@ -274,22 +293,25 @@ app.post('/auth/resend-otp', async (req, res) => {
             return res.status(400).json({ success: false, message: 'البريد الإلكتروني مطلوب.' });
         }
 
-        const storedData = otpStore[email];
-        if (!storedData) {
-            return res.status(404).json({ success: false, message: 'لم يتم العثور على طلب تحقق لهذا البريد الإلكتروني.' });
+        // البحث عن طلب التحقق الأصلي للحصول على بيانات المستخدم
+        const originalOtpRequest = await Otp.findOne({ email });
+        if (!originalOtpRequest) {
+            return res.status(404).json({ success: false, message: 'لم يتم العثور على طلب تحقق أصلي لهذا البريد الإلكتروني.' });
         }
 
-        // منع إعادة الإرسال المتكرر (مثلاً، مرة كل 60 ثانية)
-        const now = Date.now();
-        if (storedData.resendAt && (now - storedData.resendAt < 60000)) {
-            return res.status(429).json({ success: false, message: 'يرجى الانتظار قليلاً قبل إعادة إرسال الكود.' });
-        }
+        // حذف الأكواد القديمة
+        await Otp.deleteMany({ email });
 
         const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
-        storedData.code = newOtp;
-        storedData.timestamp = now; // تحديث وقت إنشاء الكود
-        storedData.resendAt = now;  // تسجيل وقت إعادة الإرسال
-
+        
+        // إنشاء طلب جديد بنفس البيانات الأصلية
+        await Otp.create({
+            email: originalOtpRequest.email,
+            code: newOtp,
+            type: originalOtpRequest.type,
+            payload: originalOtpRequest.payload
+        });
+        
         await sendOtpEmail(email, newOtp);
         console.log(`Resent OTP ${newOtp} to ${email}`);
 
