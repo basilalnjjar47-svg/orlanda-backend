@@ -231,6 +231,40 @@ app.post('/verify-otp', async (req, res) => {
     }
 });
 
+// --- جديد: نقطة نهاية لإعادة إرسال الكود ---
+app.post('/auth/resend-otp', async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'البريد الإلكتروني مطلوب.' });
+        }
+
+        const storedData = otpStore[email];
+        if (!storedData) {
+            return res.status(404).json({ success: false, message: 'لم يتم العثور على طلب تحقق لهذا البريد الإلكتروني.' });
+        }
+
+        // منع إعادة الإرسال المتكرر (مثلاً، مرة كل 60 ثانية)
+        const now = Date.now();
+        if (storedData.resendAt && (now - storedData.resendAt < 60000)) {
+            return res.status(429).json({ success: false, message: 'يرجى الانتظار قليلاً قبل إعادة إرسال الكود.' });
+        }
+
+        const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
+        storedData.code = newOtp;
+        storedData.timestamp = now; // تحديث وقت إنشاء الكود
+        storedData.resendAt = now;  // تسجيل وقت إعادة الإرسال
+
+        await sendOtpEmail(email, newOtp);
+        console.log(`Resent OTP ${newOtp} to ${email}`);
+
+        res.json({ success: true, message: 'تم إرسال كود تحقق جديد.' });
+    } catch (error) {
+        console.error('Error during OTP resend:', error.message);
+        res.status(500).json({ success: false, message: 'حدث خطأ أثناء إعادة إرسال الكود.' });
+    }
+});
+
 // --- نقطة نهاية محمية لجلب بيانات المستخدم (لم تتغير) ---
 app.get('/api/me', async (req, res) => {
     // ... (منطق جلب بيانات المستخدم لم يتغير)
