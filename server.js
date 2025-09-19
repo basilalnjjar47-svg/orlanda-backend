@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 3000;
 
 // --- الروابط الأساسية ---
 // ملاحظة: تأكد من أن هذا هو رابط موقعك الصحيح على Netlify
-const FRONTEND_URL = 'https://courageous-dasik-c7cadd.netlify.app';
+const FRONTEND_URL = 'https://tubular-cannoli-1e7789.netlify.app';
 const BACKEND_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
 
 // --- Middleware ---
