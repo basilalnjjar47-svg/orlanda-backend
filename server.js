@@ -115,14 +115,49 @@ app.get('/auth/google/callback', async (req, res) => {
     res.redirect(`${FRONTEND_URL}/verify-otp.html?email=${encodeURIComponent(email)}`);
 
   } catch (error) {
-    console.error('Error during Google OAuth:', error.response ? error.response.data : error.message);
+    const errorData = error.response ? error.response.data : { message: error.message };
+    // إذا كان الخطأ "invalid_grant"، فهذا يعني أنه طلب مكرر وغير ضار
+    if (errorData.error === 'invalid_grant') {
+        console.log('Ignoring duplicate/stale Google OAuth request.');
+        // إعادة توجيه المستخدم إلى صفحة تسجيل الدخول للسماح له بالمحاولة مرة أخرى إذا لزم الأمر
+        return res.redirect(`${FRONTEND_URL}/login.html`);
+    }
+    
+    // لجميع الأخطاء الأخرى، قم بتسجيلها وإرسال خطأ 500
+    console.error('Error during Google OAuth:', errorData);
     res.status(500).send('An error occurred during Google authentication.');
   }
 });
 
 // 2. نقطة نهاية فيسبوك (تبقى كما هي للتسجيل المباشر)
 app.get('/auth/facebook/callback', async (req, res) => {
-    // ... (منطق فيسبوك لم يتغير)
+    const { code } = req.query;
+    if (!code) return res.status(400).send('Error: Facebook code not received.');
+
+    try {
+        const tokenResponse = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+            params: { client_id: FACEBOOK_APP_ID, client_secret: FACEBOOK_APP_SECRET, redirect_uri: `${BACKEND_URL}/auth/facebook/callback`, code }
+        });
+        const { access_token } = tokenResponse.data;
+
+        const profileResponse = await axios.get('https://graph.facebook.com/me', {
+            params: { fields: 'id,name,email,picture.type(large)', access_token }
+        });
+        const { id, name, email, picture } = profileResponse.data;
+
+        const user = await User.findOneAndUpdate(
+            { email: email },
+            { $setOnInsert: { name, email, picture, provider: 'facebook', providerId: id } },
+            { upsert: true, new: true, runValidators: true }
+        );
+
+        const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '7d' });
+        res.redirect(`${FRONTEND_URL}/?token=${token}`);
+
+    } catch (error) {
+        console.error('Error during Facebook OAuth:', error.response ? error.response.data.error.message : error.message);
+        res.status(500).send('An error occurred during Facebook authentication.');
+    }
 });
 
 // --- جديد: نقطة نهاية لإنشاء حساب يدوي (الخطوة الأولى) ---
@@ -267,7 +302,22 @@ app.post('/auth/resend-otp', async (req, res) => {
 
 // --- نقطة نهاية محمية لجلب بيانات المستخدم (لم تتغير) ---
 app.get('/api/me', async (req, res) => {
-    // ... (منطق جلب بيانات المستخدم لم يتغير)
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ message: 'Authentication token is missing or invalid.' });
+        }
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.verify(token, JWT_SECRET);
+        const user = await User.findById(decoded.id).select('-providerId -password'); // لا نرسل البيانات الحساسة
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+        res.json(user);
+    } catch (error) {
+        res.status(401).json({ message: 'Invalid or expired token.' });
+    }
 });
 
 // نقطة نهاية تجريبية
