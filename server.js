@@ -198,6 +198,7 @@ app.post('/auth/login', async (req, res) => {
 
 // 5. Verify OTP
 app.post('/verify-otp', async (req, res) => {
+  console.log(`Received request on /verify-otp for email: ${req.body.email}`);
   try {
     const { email, code } = req.body;
     if (!email || !code) return res.status(400).json({ success: false, message: 'البريد الإلكتروني والكود مطلوبان.' });
@@ -279,8 +280,8 @@ app.get('/', (req, res) => {
 if (process.env.RENDER_EXTERNAL_URL) {
   setInterval(() => {
     axios.get(process.env.RENDER_EXTERNAL_URL)
-      .then(() => console.log("Pinged self to stay awake"))
-      .catch(err => console.error("Ping error:", err.message));
+      .then(response => console.log(`Self-ping successful at ${new Date().toISOString()}. Status: ${response.status}`))
+      .catch(err => console.error("Self-ping error:", err.message));
   }, 3 * 60 * 1000); // 3 دقائق
 }
 
