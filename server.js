@@ -19,7 +19,10 @@ const FRONTEND_URL = 'https://tubular-cannoli-1e7789.netlify.app';
 const BACKEND_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
 
 // --- Middleware ---
-app.use(cors({ origin: FRONTEND_URL }));
+// app.use(cors({ origin: FRONTEND_URL })); // تم تعطيل السياسة الصارمة مؤقتاً للتشخيص
+// --- تعديل: السماح لجميع المصادر مؤقتاً لتشخيص مشكلة CORS ---
+// هذا سيجعل السيرفر يقبل الطلبات من أي مكان، وهو أمر مفيد جداً لتحديد ما إذا كانت المشكلة هي CORS.
+app.use(cors());
 app.use(express.json());
 
 // --- تحميل بيانات الاعتماد من بيئة الاستضافة ---
