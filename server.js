@@ -94,6 +94,22 @@ async function sendOtpEmail(email, otp) {
   });
 }
 
+// --- جديد: دالة لإرسال بريد إعادة تعيين كلمة المرور ---
+async function sendPasswordResetEmail(email, token) {
+    const resetLink = `${FRONTEND_URL}/reset-password.html?token=${token}`;
+    await transporter.sendMail({
+        from: `"ORLANDA" <${EMAIL_USER}>`,
+        to: email,
+        subject: 'إعادة تعيين كلمة المرور الخاصة بك في ORLANDA',
+        html: `
+            <div dir="rtl" style="font-family: Arial, sans-serif; text-align: right; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+                <p>لقد طلبت إعادة تعيين كلمة المرور. اضغط على الرابط أدناه لتعيين كلمة مرور جديدة:</p>
+                <a href="${resetLink}" style="display: inline-block; padding: 10px 20px; background-color: #c9a96d; color: #fff; text-decoration: none; border-radius: 5px;">إعادة تعيين كلمة المرور</a>
+                <p style="font-size: 0.9em; color: #777;">إذا لم تطلب ذلك، يرجى تجاهل هذا البريد.</p>
+            </div>`,
+    });
+}
+
 // --- نقاط النهاية الخاصة بالمصادقة ---
 
 // 1. Google OAuth
@@ -335,6 +351,51 @@ app.post('/auth/verify-password', async (req, res) => {
     } catch (error) {
         console.error('Error during password verification:', error.message);
         res.status(500).json({ message: 'حدث خطأ أثناء التحقق من كلمة المرور.' });
+    }
+});
+
+// --- جديد: نقطة نهاية لطلب إعادة تعيين كلمة المرور ---
+app.post('/auth/forgot-password', async (req, res) => {
+    try {
+        const { email } = req.body;
+        const user = await User.findOne({ email, provider: 'email' });
+
+        if (!user) {
+            // نرسل رسالة نجاح حتى لو لم يكن المستخدم موجوداً لمنع كشف وجود الحسابات
+            return res.status(200).json({ message: 'إذا كان بريدك الإلكتروني مسجلاً، فستصلك رسالة لإعادة التعيين.' });
+        }
+
+        const resetToken = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '15m' });
+        await sendPasswordResetEmail(user.email, resetToken);
+
+        res.status(200).json({ message: 'تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني.' });
+
+    } catch (error) {
+        console.error('Error in forgot password:', error);
+        res.status(500).json({ message: 'حدث خطأ ما.' });
+    }
+});
+
+// --- جديد: نقطة نهاية لتنفيذ إعادة تعيين كلمة المرور ---
+app.post('/auth/reset-password', async (req, res) => {
+    try {
+        const { token, password } = req.body;
+        if (!token || !password || password.length < 6) {
+            return res.status(400).json({ message: 'بيانات غير صالحة.' });
+        }
+
+        const decoded = jwt.verify(token, JWT_SECRET);
+        const user = await User.findById(decoded.id);
+
+        if (!user) return res.status(400).json({ message: 'رابط غير صالح أو منتهي الصلاحية.' });
+
+        user.password = await bcrypt.hash(password, 10);
+        await user.save();
+
+        res.status(200).json({ message: 'تم تحديث كلمة المرور بنجاح. سيتم توجيهك لتسجيل الدخول.' });
+
+    } catch (error) {
+        res.status(400).json({ message: 'رابط غير صالح أو منتهي الصلاحية.' });
     }
 });
 
