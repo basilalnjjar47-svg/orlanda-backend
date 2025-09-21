@@ -341,6 +341,11 @@ app.post('/auth/verify-password', async (req, res) => {
         const user = await User.findById(userId);
         if (!user) return res.status(404).json({ message: 'المستخدم غير موجود.' });
 
+        // --- جديد: التحقق مما إذا كان المستخدم لديه كلمة مرور مسجلة ---
+        if (!user.password) {
+            return res.status(401).json({ message: 'هذا الحساب لا يستخدم كلمة مرور. يرجى استخدام طريقة تسجيل الدخول الأصلية.' });
+        }
+
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(401).json({ message: 'كلمة المرور غير صحيحة.' });
 
