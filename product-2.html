@@ -330,7 +330,7 @@
         <!-- قسم تفاصيل المنتج -->
         <section class="product-page-section" data-id="2" data-name="lasina البرازيلي" data-price="160" data-image="images/lasina.png">
             <div class="container">
-                <a href="index.html#all-products" class="back-to-products-link" data-no-transition><i class="fas fa-arrow-right"></i> العودة إلى كل المنتجات</a>
+                <a href="index.html#all-products" class="back-to-products-link"><i class="fas fa-arrow-right"></i> العودة إلى كل المنتجات</a>
                 <div class="product-details-grid">
                     <div class="product-image-container">
                         <img src="images/lasina.png" alt="lasina البرازيلي" loading="lazy">
@@ -441,55 +441,6 @@
             const cartSummary = document.getElementById('cart-summary');
             const cartTotalEl = document.getElementById('cart-total');
             const cartCounter = document.getElementById('cart-counter');
-
-            // --- جديد: رابط السيرفر ---
-            const backendUrl = 'https://orlanda-backend.onrender.com';
-
-            // --- جديد: منطق المصادقة الموحد والاحترافي ---
-            async function checkAuthStatus() {
-                const token = localStorage.getItem('userToken');
-                const userArea = document.getElementById('user-area');
-                const userInfo = document.getElementById('user-info');
-                const userNameEl = document.getElementById('user-name');
-                const logoutBtn = document.getElementById('logout-btn');
-                
-                if (!userArea || !userInfo) return;
-
-                if (!token) {
-                    userArea.style.display = 'flex';
-                    userInfo.style.display = 'none';
-                    return;
-                }
-
-                try {
-                    const response = await fetch(`${backendUrl}/api/me`, {
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    });
-
-                    if (response.ok) {
-                        const user = await response.json();
-                        userArea.style.display = 'none';
-                        userInfo.style.display = 'flex';
-                        userNameEl.textContent = `أهلاً، ${user.name.split(' ')[0]}`;
-                    } else {
-                        localStorage.removeItem('userToken');
-                        userArea.style.display = 'flex';
-                        userInfo.style.display = 'none';
-                    }
-                } catch (error) {
-                    console.error('Authentication check failed:', error);
-                    userArea.style.display = 'flex';
-                    userInfo.style.display = 'none';
-                }
-
-                if (logoutBtn) {
-                    logoutBtn.onclick = (e) => { // استخدام onclick لمنع تكرار الحدث
-                        e.preventDefault();
-                        localStorage.removeItem('userToken');
-                        navigateTo(window.location.pathname); // استخدام دالة الانتقال السلس
-                    };
-                }
-            }
 
             // Coupon Logic elements
             let discountPercent = 0;
