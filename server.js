@@ -112,13 +112,24 @@ app.get('/auth/google/callback', async (req, res) => {
     });
     const { id, name, email, picture } = profileResponse.data;
 
-    await Otp.deleteMany({ email });
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    await Otp.create({ email, code: otp, type: 'google_2fa', payload: { id, name, email, picture } });
-    console.log(`Generated OTP ${otp} for Google user ${email}`);
+    // --- تعديل: التحقق مما إذا كان المستخدم موجوداً أم لا ---
+    const existingUser = await User.findOne({ email });
 
-    await sendOtpEmail(email, otp);
-    res.redirect(`${FRONTEND_URL}/verify-otp.html?email=${encodeURIComponent(email)}`);
+    if (existingUser) {
+      // المستخدم موجود: اطلب منه إدخال كلمة المرور
+      // نصدر توكن مؤقت يحتوي على بيانات المستخدم لتمريرها إلى الخطوة التالية
+      const passwordEntryToken = jwt.sign({ userId: existingUser._id, email: existingUser.email }, JWT_SECRET, { expiresIn: '10m' });
+      res.redirect(`${FRONTEND_URL}/enter-password.html?token=${passwordEntryToken}`);
+    } else {
+      // المستخدم جديد: أرسل كود التحقق (OTP)
+      await Otp.deleteMany({ email });
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      await Otp.create({ email, code: otp, type: 'google_2fa', payload: { id, name, email, picture } });
+      console.log(`Generated OTP ${otp} for new Google user ${email}`);
+
+      await sendOtpEmail(email, otp);
+      res.redirect(`${FRONTEND_URL}/verify-otp.html?email=${encodeURIComponent(email)}`);
+    }
   } catch (error) {
     const errorData = error.response ? error.response.data : { message: error.message };
     if (errorData.error === 'invalid_grant') {
@@ -228,16 +239,21 @@ app.post('/verify-otp', async (req, res) => {
       return res.json({ success: true, creationToken });
 
     } else if (otpDoc.type === 'google_2fa') {
-      // لتسجيل الدخول بجوجل، أنشئ المستخدم وسجل دخوله مباشرة
-      const user = await User.findOneAndUpdate(
-        { email: payload.email },
-        { $setOnInsert: { name: payload.name, email: payload.email, picture: payload.picture, provider: 'google', providerId: payload.id } },
-        { upsert: true, new: true, runValidators: true }
+      // --- تعديل: لمستخدم جوجل الجديد، نصدر توكن إنشاء ---
+      // لا ننشئ المستخدم الآن، بل نمرر بياناته إلى خطوة إنشاء كلمة المرور
+      const creationToken = jwt.sign(
+        {
+          name: payload.name,
+          email: payload.email,
+          picture: payload.picture,
+          provider: 'google',
+          providerId: payload.id
+        },
+        JWT_SECRET,
+        { expiresIn: '15m' }
       );
-      const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '7d' });
       await Otp.deleteOne({ _id: otpDoc._id });
-      // إرجاع توكن تسجيل الدخول النهائي
-      return res.json({ success: true, token, userName: user.name });
+      return res.json({ success: true, creationToken });
 
     } else {
       return res.status(500).json({ success: false, message: 'نوع تحقق غير معروف.' });
@@ -271,7 +287,16 @@ app.post('/auth/create-account', async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        const user = new User({ name, email, password: hashedPassword, provider: 'email' });
+        // --- تعديل: التعامل مع بيانات جوجل إذا كانت موجودة ---
+        const userPayload = {
+            name,
+            email,
+            password: hashedPassword,
+            provider: decoded.provider || 'email', // الافتراضي هو 'email'
+            providerId: decoded.providerId,
+            picture: decoded.picture
+        };
+        const user = new User(userPayload);
         await user.save();
 
         const loginToken = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '7d' });
@@ -283,6 +308,33 @@ app.post('/auth/create-account', async (req, res) => {
         }
         console.error('Error during account creation:', error.message);
         res.status(500).json({ message: 'حدث خطأ أثناء إنشاء الحساب.' });
+    }
+});
+
+// --- جديد: نقطة نهاية للتحقق من كلمة مرور المستخدم الحالي ---
+app.post('/auth/verify-password', async (req, res) => {
+    try {
+        const { token, password } = req.body;
+        if (!token || !password) {
+            return res.status(400).json({ message: 'البيانات المطلوبة غير مكتملة.' });
+        }
+
+        const decoded = jwt.verify(token, JWT_SECRET);
+        const { userId } = decoded;
+
+        const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ message: 'المستخدم غير موجود.' });
+
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) return res.status(401).json({ message: 'كلمة المرور غير صحيحة.' });
+
+        // كلمة المرور صحيحة، قم بإصدار توكن تسجيل دخول نهائي
+        const loginToken = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '7d' });
+        res.json({ success: true, token: loginToken, userName: user.name });
+
+    } catch (error) {
+        console.error('Error during password verification:', error.message);
+        res.status(500).json({ message: 'حدث خطأ أثناء التحقق من كلمة المرور.' });
     }
 });
 
