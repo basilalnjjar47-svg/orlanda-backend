@@ -20,8 +20,6 @@ const BACKEND_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}
 
 // --- Middleware ---
 // --- سياسة CORS النهائية والآمنة ---
-// --- تعديل نهائي: سياسة CORS قوية ومفصلة لحل مشاكل الاتصال نهائياً ---
-// هذا الإعداد يحدد بوضوح من يُسمح له بالاتصال، وما هي الطلبات المسموحة.
 const corsOptions = {
   origin: FRONTEND_URL, // السماح فقط لموقعك على Netlify بالوصول
   methods: "GET,HEAD,PUT,PATCH,POST,DELETE", // تحديد أنواع الطلبات المسموحة
@@ -29,21 +27,20 @@ const corsOptions = {
   credentials: true, // السماح بإرسال الكوكيز أو ترويسات المصادقة إذا احتجت لها مستقبلاً
   optionsSuccessStatus: 200 // إرجاع 200 بدلاً من 204 لطلبات OPTIONS لضمان التوافق مع كل المتصفحات
 };
-
-// تطبيق CORS على جميع الطلبات
 app.use(cors(corsOptions));
-
 app.use(express.json());
 
 // --- تحميل بيانات الاعتماد من بيئة الاستضافة ---
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const FACEBOOK_APP_ID = process.env.FACEBOOK_APP_ID;
-const FACEBOOK_APP_SECRET = process.env.FACEBOOK_APP_SECRET;
-const DATABASE_URL = process.env.DATABASE_URL;
-const JWT_SECRET = process.env.JWT_SECRET;
-const EMAIL_USER = process.env.EMAIL_USER;
-const EMAIL_PASS = process.env.EMAIL_PASS;
+const {
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
+  FACEBOOK_APP_ID,
+  FACEBOOK_APP_SECRET,
+  DATABASE_URL,
+  JWT_SECRET,
+  EMAIL_USER,
+  EMAIL_PASS
+} = process.env;
 
 // --- الاتصال بقاعدة البيانات ---
 mongoose.connect(DATABASE_URL)
@@ -56,7 +53,7 @@ mongoose.connect(DATABASE_URL)
 // --- موديل المستخدم ---
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String },
   dob: { type: Date },
   picture: String,
@@ -65,12 +62,13 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 const User = mongoose.model('User', userSchema);
 
-// --- موديل OTP ---
+// --- موديل OTP (مع انتهاء الصلاحية التلقائي) ---
 const otpSchema = new mongoose.Schema({
   email: { type: String, required: true, lowercase: true },
   code: { type: String, required: true },
   type: { type: String, required: true, enum: ['google_2fa', 'email_verify'] },
   payload: { type: mongoose.Schema.Types.Mixed },
+  // هذا هو الحل الجذري: سيقوم MongoDB بحذف هذا المستند تلقائياً بعد 10 دقائق
   createdAt: { type: Date, default: Date.now, expires: '10m' }
 });
 const Otp = mongoose.model('Otp', otpSchema);
@@ -97,6 +95,7 @@ async function sendOtpEmail(email, otp) {
 }
 
 // --- نقاط النهاية الخاصة بالمصادقة ---
+
 // 1. Google OAuth
 app.get('/auth/google/callback', async (req, res) => {
   const { code } = req.query;
@@ -104,13 +103,7 @@ app.get('/auth/google/callback', async (req, res) => {
 
   try {
     const tokenResponse = await axios.post('https://oauth2.googleapis.com/token', null, {
-      params: {
-        code,
-        client_id: GOOGLE_CLIENT_ID,
-        client_secret: GOOGLE_CLIENT_SECRET,
-        redirect_uri: `${BACKEND_URL}/auth/google/callback`,
-        grant_type: 'authorization_code'
-      },
+      params: { code, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET, redirect_uri: `${BACKEND_URL}/auth/google/callback`, grant_type: 'authorization_code' },
     });
     const { access_token } = tokenResponse.data;
 
@@ -211,12 +204,12 @@ app.post('/auth/login', async (req, res) => {
 
 // 5. Verify OTP
 app.post('/verify-otp', async (req, res) => {
-  console.log(`Received request on /verify-otp for email: ${req.body.email}`);
   try {
     const { email, code } = req.body;
     if (!email || !code) return res.status(400).json({ success: false, message: 'البريد الإلكتروني والكود مطلوبان.' });
 
     const otpDoc = await Otp.findOne({ email, code });
+    // إذا لم يتم العثور على الكود، فهذا يعني أنه غير صحيح أو انتهت صلاحيته (تم حذفه تلقائياً)
     if (!otpDoc) return res.status(400).json({ success: false, message: 'الكود غير صحيح أو انتهت صلاحيته.' });
 
     let user;
@@ -236,9 +229,10 @@ app.post('/verify-otp', async (req, res) => {
     }
 
     const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '7d' });
-    await Otp.deleteOne({ _id: otpDoc._id });
+    await Otp.deleteOne({ _id: otpDoc._id }); // حذف الكود المستخدم فوراً
     res.json({ success: true, token, userName: user.name });
   } catch (error) {
+    // معالجة خطأ البريد الإلكتروني المكرر
     if (error.code === 11000) return res.status(409).json({ success: false, message: 'البريد الإلكتروني مستخدم بالفعل.' });
     console.error('Error during OTP verification:', error.message);
     res.status(500).json({ success: false, message: 'حدث خطأ أثناء التحقق من الكود.' });
@@ -289,7 +283,7 @@ app.get('/', (req, res) => {
   res.send('Orlanda backend server is running successfully!');
 });
 
-// --- Self-ping كل 3 دقائق ---
+// --- Self-ping لإبقاء السيرفر نشطاً ---
 if (process.env.RENDER_EXTERNAL_URL) {
   setInterval(() => {
     axios.get(process.env.RENDER_EXTERNAL_URL)
@@ -298,7 +292,10 @@ if (process.env.RENDER_EXTERNAL_URL) {
   }, 3 * 60 * 1000); // 3 دقائق
 }
 
-// 4. تشغيل السيرفر
-app.listen(PORT, () => {
+// --- تشغيل السيرفر وجعله قابلاً للاختبار ---
+const server = app.listen(PORT, () => {
   console.log(`Backend server is running on port ${PORT}`);
 });
+
+// تصدير التطبيق والسيرفر للاستخدام في الاختبارات الآلية
+module.exports = { app, server };
