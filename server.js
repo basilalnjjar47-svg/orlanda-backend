@@ -162,16 +162,17 @@ app.get('/auth/facebook/callback', async (req, res) => {
 // 3. Register
 app.post('/auth/register', async (req, res) => {
   try {
-    const { name, email, password, dob } = req.body;
-    if (!name || !email || !password) return res.status(400).json({ message: 'الاسم والبريد الإلكتروني وكلمة المرور حقول مطلوبة.' });
+    // --- تعديل: الآن نطلب الاسم والبريد الإلكتروني فقط لبدء التسجيل ---
+    const { name, email } = req.body;
+    if (!name || !email) return res.status(400).json({ message: 'الاسم والبريد الإلكتروني حقول مطلوبة.' });
 
     const existingUser = await User.findOne({ email });
     if (existingUser) return res.status(409).json({ message: 'هذا البريد الإلكتروني مستخدم بالفعل.' });
 
-    const hashedPassword = await bcrypt.hash(password, 10);
     await Otp.deleteMany({ email });
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    await Otp.create({ email, code: otp, type: 'email_verify', payload: { name, email, password: hashedPassword, dob } });
+    // --- تعديل: الحمولة تحتوي فقط على الاسم والبريد الإلكتروني ---
+    await Otp.create({ email, code: otp, type: 'email_verify', payload: { name, email } });
     console.log(`Generated OTP ${otp} for new user registration ${email}`);
 
     await sendOtpEmail(email, otp);
@@ -212,31 +213,77 @@ app.post('/verify-otp', async (req, res) => {
     // إذا لم يتم العثور على الكود، فهذا يعني أنه غير صحيح أو انتهت صلاحيته (تم حذفه تلقائياً)
     if (!otpDoc) return res.status(400).json({ success: false, message: 'الكود غير صحيح أو انتهت صلاحيته.' });
 
-    let user;
     const { payload } = otpDoc;
 
+    // --- تعديل: تفريع المنطق حسب نوع التحقق ---
     if (otpDoc.type === 'email_verify') {
-      user = new User({ name: payload.name, email: payload.email, password: payload.password, dob: payload.dob, provider: 'email' });
-      await user.save();
+      // للتسجيل بالبريد الإلكتروني، قم بإصدار توكن مؤقت للمتابعة إلى صفحة إنشاء كلمة المرور
+      const creationToken = jwt.sign(
+        { name: payload.name, email: payload.email },
+        JWT_SECRET,
+        { expiresIn: '15m' } // هذا التوكن صالح لمدة 15 دقيقة
+      );
+      await Otp.deleteOne({ _id: otpDoc._id });
+      // إرجاع التوكن المؤقت الخاص بالإنشاء
+      return res.json({ success: true, creationToken });
+
     } else if (otpDoc.type === 'google_2fa') {
-      user = await User.findOneAndUpdate(
+      // لتسجيل الدخول بجوجل، أنشئ المستخدم وسجل دخوله مباشرة
+      const user = await User.findOneAndUpdate(
         { email: payload.email },
         { $setOnInsert: { name: payload.name, email: payload.email, picture: payload.picture, provider: 'google', providerId: payload.id } },
         { upsert: true, new: true, runValidators: true }
       );
+      const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '7d' });
+      await Otp.deleteOne({ _id: otpDoc._id });
+      // إرجاع توكن تسجيل الدخول النهائي
+      return res.json({ success: true, token, userName: user.name });
+
     } else {
       return res.status(500).json({ success: false, message: 'نوع تحقق غير معروف.' });
     }
 
-    const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '7d' });
-    await Otp.deleteOne({ _id: otpDoc._id }); // حذف الكود المستخدم فوراً
-    res.json({ success: true, token, userName: user.name });
   } catch (error) {
-    // معالجة خطأ البريد الإلكتروني المكرر
-    if (error.code === 11000) return res.status(409).json({ success: false, message: 'البريد الإلكتروني مستخدم بالفعل.' });
     console.error('Error during OTP verification:', error.message);
     res.status(500).json({ success: false, message: 'حدث خطأ أثناء التحقق من الكود.' });
   }
+});
+
+// --- جديد: نقطة نهاية لإنشاء الحساب النهائي بكلمة مرور ---
+app.post('/auth/create-account', async (req, res) => {
+    try {
+        const { token, password } = req.body;
+        if (!token || !password) {
+            return res.status(400).json({ message: 'البيانات المطلوبة غير مكتملة.' });
+        }
+        if (password.length < 6) {
+            return res.status(400).json({ message: 'يجب أن تتكون كلمة المرور من 6 أحرف على الأقل.' });
+        }
+
+        // التحقق من التوكن المؤقت
+        const decoded = jwt.verify(token, JWT_SECRET);
+        const { name, email } = decoded;
+
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            return res.status(409).json({ message: 'هذا البريد الإلكتروني مستخدم بالفعل.' });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        const user = new User({ name, email, password: hashedPassword, provider: 'email' });
+        await user.save();
+
+        const loginToken = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '7d' });
+        res.json({ success: true, token: loginToken, userName: user.name });
+
+    } catch (error) {
+        if (error instanceof jwt.JsonWebTokenError) {
+            return res.status(401).json({ message: 'جلسة إنشاء الحساب غير صالحة أو منتهية الصلاحية.' });
+        }
+        console.error('Error during account creation:', error.message);
+        res.status(500).json({ message: 'حدث خطأ أثناء إنشاء الحساب.' });
+    }
 });
 
 // 6. Resend OTP
