@@ -529,3 +529,18 @@ app.delete('/api/reviews/:id', getUserFromToken, async (req, res) => {
     res.status(500).json({ message: 'حدث خطأ أثناء حذف التقييم.' });
   }
 });
+
+// --- جديد: نقطة نهاية لجلب أحدث التقييمات للصفحة الرئيسية ---
+app.get('/api/reviews/latest', async (req, res) => {
+  try {
+    const latestReviews = await Review.find({})
+      .sort({ createdAt: -1 })
+      .limit(3) // جلب أحدث 3 تقييمات
+      .populate('userId', 'picture'); // جلب صورة المستخدم
+
+    res.json(latestReviews);
+  } catch (error) {
+    console.error('Error fetching latest reviews:', error);
+    res.status(500).json({ message: 'Error fetching latest reviews.' });
+  }
+});
