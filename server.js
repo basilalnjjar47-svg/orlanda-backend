@@ -191,10 +191,11 @@ app.get('/auth/facebook/callback', async (req, res) => {
       params: { fields: 'id,name,email,picture.type(large)', access_token }
     });
     const { id, name, email, picture } = profileResponse.data;
+    const pictureUrl = picture && picture.data ? picture.data.url : null; // استخراج رابط الصورة الصحيح
 
     const user = await User.findOneAndUpdate(
       { email },
-      { $setOnInsert: { name, email, picture, provider: 'facebook', providerId: id } },
+      { $setOnInsert: { name, email, picture: pictureUrl, provider: 'facebook', providerId: id } },
       { upsert: true, new: true, runValidators: true }
     );
 
