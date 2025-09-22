@@ -415,6 +415,29 @@ app.get('/api/me/orders', getUserFromToken, async (req, res) => {
   }
 });
 
+// نقطة نهاية تجريبية
+app.get('/', (req, res) => {
+  res.send('Orlanda backend server is running successfully!');
+});
+
+// --- Self-ping لإبقاء السيرفر نشطاً ---
+if (process.env.RENDER_EXTERNAL_URL) {
+  setInterval(() => {
+    axios.get(process.env.RENDER_EXTERNAL_URL)
+      .then(response => console.log(`Self-ping successful at ${new Date().toISOString()}. Status: ${response.status}`))
+      .catch(err => console.error("Self-ping error:", err.message));
+  }, 3 * 60 * 1000); // 3 دقائق
+}
+
+// --- تشغيل السيرفر وجعله قابلاً للاختبار ---
+const server = app.listen(PORT, () => {
+  console.log(`Backend server is running on port ${PORT}`);
+});
+
+// تصدير التطبيق والسيرفر للاستخدام في الاختبارات الآلية
+module.exports = { app, server };
+
+
 // --- جديد: نقاط نهاية خاصة بالتقييمات ---
 
 // 1. جلب كل التقييمات لمنتج معين
@@ -471,25 +494,3 @@ app.get('/api/products/ratings', async (req, res) => {
     res.status(500).json({ message: 'Error fetching ratings stats.' });
   }
 });
-
-// نقطة نهاية تجريبية
-app.get('/', (req, res) => {
-  res.send('Orlanda backend server is running successfully!');
-});
-
-// --- Self-ping لإبقاء السيرفر نشطاً ---
-if (process.env.RENDER_EXTERNAL_URL) {
-  setInterval(() => {
-    axios.get(process.env.RENDER_EXTERNAL_URL)
-      .then(response => console.log(`Self-ping successful at ${new Date().toISOString()}. Status: ${response.status}`))
-      .catch(err => console.error("Self-ping error:", err.message));
-  }, 3 * 60 * 1000); // 3 دقائق
-}
-
-// --- تشغيل السيرفر وجعله قابلاً للاختبار ---
-const server = app.listen(PORT, () => {
-  console.log(`Backend server is running on port ${PORT}`);
-});
-
-// تصدير التطبيق والسيرفر للاستخدام في الاختبارات الآلية
-module.exports = { app, server };
