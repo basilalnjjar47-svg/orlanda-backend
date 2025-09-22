@@ -132,10 +132,30 @@ app.get('/auth/google/callback', async (req, res) => {
     const existingUser = await User.findOne({ email });
 
     if (existingUser) {
-      // المستخدم موجود: اطلب منه إدخال كلمة المرور
-      // نصدر توكن مؤقت يحتوي على بيانات المستخدم لتمريرها إلى الخطوة التالية
-      const passwordEntryToken = jwt.sign({ userId: existingUser._id, email: existingUser.email }, JWT_SECRET, { expiresIn: '10m' });
-      res.redirect(`${FRONTEND_URL}/enter-password.html?token=${passwordEntryToken}`);
+      // --- تعديل: المستخدم موجود، تحقق مما إذا كان لديه كلمة مرور ---
+      if (existingUser.password) {
+        // المستخدم لديه كلمة مرور، اطلب منه إدخالها للتحقق
+        const passwordEntryToken = jwt.sign({ userId: existingUser._id, email: existingUser.email }, JWT_SECRET, { expiresIn: '10m' });
+        res.redirect(`${FRONTEND_URL}/enter-password.html?token=${passwordEntryToken}`);
+      } else {
+        // المستخدم موجود ولكن ليس لديه كلمة مرور (حساب قديم أو من فيسبوك)
+        // سنقوم "بترقية" الحساب عن طريق جعله ينشئ كلمة مرور
+        const creationToken = jwt.sign(
+          {
+            name: existingUser.name,
+            email: existingUser.email,
+            picture: picture || existingUser.picture,
+            provider: 'google',
+            providerId: id,
+            isUpgrade: true, // علامة للتمييز بين الإنشاء والتحديث
+            userId: existingUser._id // تمرير هوية المستخدم لتحديثه
+          },
+          JWT_SECRET,
+          { expiresIn: '15m' }
+        );
+        // لا حاجة لكود التحقق هنا لأنه قام بالمصادقة عبر جوجل بالفعل
+        res.redirect(`${FRONTEND_URL}/create-password.html?token=${creationToken}`);
+      }
     } else {
       // المستخدم جديد: أرسل كود التحقق (OTP)
       await Otp.deleteMany({ email });
@@ -294,26 +314,42 @@ app.post('/auth/create-account', async (req, res) => {
 
         // التحقق من التوكن المؤقت
         const decoded = jwt.verify(token, JWT_SECRET);
-        const { name, email } = decoded;
-
-        const existingUser = await User.findOne({ email });
-        if (existingUser) {
-            return res.status(409).json({ message: 'هذا البريد الإلكتروني مستخدم بالفعل.' });
-        }
+        const { name, email, isUpgrade, userId } = decoded;
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // --- تعديل: التعامل مع بيانات جوجل إذا كانت موجودة ---
-        const userPayload = {
-            name,
-            email,
-            password: hashedPassword,
-            provider: decoded.provider || 'email', // الافتراضي هو 'email'
-            providerId: decoded.providerId,
-            picture: decoded.picture
-        };
-        const user = new User(userPayload);
-        await user.save();
+        let user;
+        // --- تعديل: التعامل مع حالة تحديث حساب موجود أو إنشاء حساب جديد ---
+        if (isUpgrade && userId) {
+            // هذا "ترقية" لحساب موجود. ابحث عن المستخدم وقم بتحديثه
+            user = await User.findById(userId);
+            if (!user) {
+                return res.status(404).json({ message: 'المستخدم المراد تحديثه غير موجود.' });
+            }
+            user.password = hashedPassword;
+            // تحديث بياناته من جوجل إذا كانت متوفرة
+            user.provider = decoded.provider || user.provider;
+            user.providerId = decoded.providerId || user.providerId;
+            user.picture = decoded.picture || user.picture;
+            await user.save();
+        } else {
+            // هذا إنشاء حساب جديد
+            const existingUser = await User.findOne({ email });
+            if (existingUser) {
+                return res.status(409).json({ message: 'هذا البريد الإلكتروني مستخدم بالفعل.' });
+            }
+
+            const userPayload = {
+                name,
+                email,
+                password: hashedPassword,
+                provider: decoded.provider || 'email', // الافتراضي هو 'email'
+                providerId: decoded.providerId,
+                picture: decoded.picture
+            };
+            user = new User(userPayload);
+            await user.save();
+        }
 
         const loginToken = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '7d' });
         res.json({ success: true, token: loginToken, userName: user.name });
