@@ -73,6 +73,21 @@ const otpSchema = new mongoose.Schema({
 });
 const Otp = mongoose.model('Otp', otpSchema);
 
+// --- جديد: موديل الطلبات ---
+const orderSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  products: [{
+    productId: { type: String, required: true },
+    name: { type: String, required: true },
+    quantity: { type: Number, required: true },
+    price: { type: Number, required: true },
+    image: { type: String }
+  }],
+  totalAmount: { type: Number, required: true },
+  status: { type: String, default: 'قيد المعالجة', enum: ['قيد المعالجة', 'تم الشحن', 'تم التوصيل', 'ملغي'] }
+}, { timestamps: true });
+const Order = mongoose.model('Order', orderSchema);
+
 // --- إعداد البريد ---
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -565,6 +580,41 @@ app.post('/api/me/delete', getUserFromToken, async (req, res) => {
         console.error('Error deleting account:', error.message);
         res.status(500).json({ message: 'حدث خطأ أثناء حذف الحساب.' });
     }
+});
+
+// --- جديد: نقاط نهاية خاصة بالطلبات ---
+
+// إنشاء طلب جديد
+app.post('/api/orders', getUserFromToken, async (req, res) => {
+  try {
+    const { products, totalAmount } = req.body;
+    if (!products || products.length === 0 || !totalAmount) {
+      return res.status(400).json({ message: 'بيانات الطلب غير مكتملة.' });
+    }
+
+    const newOrder = new Order({
+      userId: req.user._id,
+      products,
+      totalAmount,
+    });
+
+    await newOrder.save();
+    res.status(201).json({ success: true, message: 'تم إنشاء طلبك بنجاح!', order: newOrder });
+  } catch (error) {
+    console.error('Error creating order:', error.message);
+    res.status(500).json({ message: 'حدث خطأ أثناء إنشاء الطلب.' });
+  }
+});
+
+// جلب طلبات المستخدم الحالي
+app.get('/api/me/orders', getUserFromToken, async (req, res) => {
+  try {
+    const orders = await Order.find({ userId: req.user._id }).sort({ createdAt: -1 });
+    res.json(orders);
+  } catch (error) {
+    console.error('Error fetching orders:', error.message);
+    res.status(500).json({ message: 'حدث خطأ أثناء جلب الطلبات.' });
+  }
 });
 
 // نقطة نهاية تجريبية
