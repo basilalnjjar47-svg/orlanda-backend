@@ -100,6 +100,9 @@ reviewSchema.index({ productId: 1, userId: 1 }, { unique: true });
 
 const Review = mongoose.model('Review', reviewSchema);
 
+// --- Admin Configuration ---
+const ADMIN_EMAILS = ['basilalnjjar47@gmail.com'];
+
 // --- إعداد البريد ---
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -348,7 +351,15 @@ const getUserFromToken = async (req, res, next) => {
 
 // --- نقاط نهاية الملف الشخصي والطلبات ---
 app.get('/api/me', getUserFromToken, (req, res) => {
-  res.json({ _id: req.user._id, name: req.user.name, email: req.user.email, picture: req.user.picture, provider: req.user.provider });
+  const isAdmin = ADMIN_EMAILS.includes(req.user.email);
+  res.json({
+    _id: req.user._id,
+    name: req.user.name,
+    email: req.user.email,
+    picture: req.user.picture,
+    provider: req.user.provider,
+    isAdmin // Add this flag
+  });
 });
 app.patch('/api/me', getUserFromToken, async (req, res) => {
   try {
@@ -492,5 +503,29 @@ app.get('/api/products/ratings', async (req, res) => {
   } catch (error) {
     console.error('Error fetching ratings stats:', error);
     res.status(500).json({ message: 'Error fetching ratings stats.' });
+  }
+});
+
+// 4. حذف تقييم (للادمن فقط)
+app.delete('/api/reviews/:id', getUserFromToken, async (req, res) => {
+  try {
+    // التحقق من أن المستخدم هو الأدمن
+    if (!ADMIN_EMAILS.includes(req.user.email)) {
+      return res.status(403).json({ message: 'Forbidden: You do not have permission to perform this action.' });
+    }
+
+    const review = await Review.findById(req.params.id);
+
+    if (!review) {
+      return res.status(404).json({ message: 'Review not found.' });
+    }
+
+    await Review.findByIdAndDelete(req.params.id);
+
+    res.json({ success: true, message: 'تم حذف التقييم بنجاح.' });
+
+  } catch (error) {
+    console.error('Error deleting review:', error);
+    res.status(500).json({ message: 'حدث خطأ أثناء حذف التقييم.' });
   }
 });
