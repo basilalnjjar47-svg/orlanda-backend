@@ -463,21 +463,108 @@ app.post('/auth/resend-otp', async (req, res) => {
   }
 });
 
-// 7. Get current user
-app.get('/api/me', async (req, res) => {
+// --- Middleware to get user from token ---
+const getUserFromToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).json({ message: 'Authentication token is missing or invalid.' });
-
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'Authentication token is missing or invalid.' });
+    }
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, JWT_SECRET);
-    const user = await User.findById(decoded.id).select('-providerId -password');
-    if (!user) return res.status(404).json({ message: 'User not found.' });
-
-    res.json(user);
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    req.user = user; // Attach user to request object
+    next();
   } catch (error) {
     res.status(401).json({ message: 'Invalid or expired token.' });
   }
+};
+
+// 7. Get current user
+app.get('/api/me', getUserFromToken, async (req, res) => {
+  // The user object is already attached to req.user by the middleware
+  // We just need to format it for the response, excluding sensitive data
+  res.json({
+    _id: req.user._id,
+    name: req.user.name,
+    email: req.user.email,
+    picture: req.user.picture,
+    provider: req.user.provider
+  });
+});
+
+// 8. Update User Profile
+app.patch('/api/me', getUserFromToken, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || name.trim().length === 0) {
+      return res.status(400).json({ message: 'الاسم مطلوب.' });
+    }
+    req.user.name = name;
+    await req.user.save();
+    res.json({ success: true, message: 'تم تحديث الملف الشخصي بنجاح.', user: { name: req.user.name, email: req.user.email, picture: req.user.picture } });
+  } catch (error) {
+    console.error('Error updating profile:', error.message);
+    res.status(500).json({ message: 'حدث خطأ أثناء تحديث الملف الشخصي.' });
+  }
+});
+
+// 9. Change Password
+app.post('/api/me/change-password', getUserFromToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'كلمة المرور الحالية والجديدة مطلوبتان.' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'يجب أن تتكون كلمة المرور الجديدة من 6 أحرف على الأقل.' });
+    }
+    if (!req.user.password) {
+        return res.status(400).json({ message: 'لا يمكن تغيير كلمة المرور للحسابات المسجلة عبر وسائل التواصل الاجتماعي.' });
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, req.user.password);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'كلمة المرور الحالية غير صحيحة.' });
+    }
+
+    req.user.password = await bcrypt.hash(newPassword, 10);
+    await req.user.save();
+
+    res.json({ success: true, message: 'تم تغيير كلمة المرور بنجاح.' });
+  } catch (error) {
+    console.error('Error changing password:', error.message);
+    res.status(500).json({ message: 'حدث خطأ أثناء تغيير كلمة المرور.' });
+  }
+});
+
+// 10. Delete Account
+app.post('/api/me/delete', getUserFromToken, async (req, res) => {
+    try {
+        const { password } = req.body;
+        if (!req.user.password) {
+            return res.status(400).json({ message: 'لا يمكن حذف الحسابات الاجتماعية مباشرة. يرجى التواصل مع الدعم.' });
+        }
+        if (!password) {
+            return res.status(400).json({ message: 'كلمة المرور مطلوبة لتأكيد الحذف.' });
+        }
+
+        const isMatch = await bcrypt.compare(password, req.user.password);
+        if (!isMatch) {
+            return res.status(401).json({ message: 'كلمة المرور غير صحيحة.' });
+        }
+
+        await User.findByIdAndDelete(req.user._id);
+        await Otp.deleteMany({ email: req.user.email });
+
+        res.json({ success: true, message: 'تم حذف حسابك بنجاح.' });
+    } catch (error) {
+        console.error('Error deleting account:', error.message);
+        res.status(500).json({ message: 'حدث خطأ أثناء حذف الحساب.' });
+    }
 });
 
 // نقطة نهاية تجريبية
