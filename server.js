@@ -86,6 +86,20 @@ const orderSchema = new mongoose.Schema({
 }, { timestamps: true });
 const Order = mongoose.model('Order', orderSchema);
 
+// --- جديد: موديل التقييمات ---
+const reviewSchema = new mongoose.Schema({
+  productId: { type: String, required: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  userName: { type: String, required: true },
+  rating: { type: Number, required: true, min: 1, max: 5 },
+  comment: { type: String, required: true, trim: true }
+}, { timestamps: true });
+
+// لمنع المستخدم من تقييم نفس المنتج أكثر من مرة
+reviewSchema.index({ productId: 1, userId: 1 }, { unique: true });
+
+const Review = mongoose.model('Review', reviewSchema);
+
 // --- إعداد البريد ---
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -398,6 +412,63 @@ app.get('/api/me/orders', getUserFromToken, async (req, res) => {
   } catch (error) {
     console.error('Error fetching orders:', error.message);
     res.status(500).json({ message: 'حدث خطأ أثناء جلب الطلبات.' });
+  }
+});
+
+// --- جديد: نقاط نهاية خاصة بالتقييمات ---
+
+// 1. جلب كل التقييمات لمنتج معين
+app.get('/api/products/:id/reviews', async (req, res) => {
+  try {
+    const reviews = await Review.find({ productId: req.params.id }).sort({ createdAt: -1 });
+    res.json(reviews);
+  } catch (error) {
+    console.error('Error fetching reviews:', error);
+    res.status(500).json({ message: 'Error fetching reviews.' });
+  }
+});
+
+// 2. إنشاء تقييم جديد (محمي للمستخدمين المسجلين فقط)
+app.post('/api/products/:id/reviews', getUserFromToken, async (req, res) => {
+  try {
+    const { rating, comment } = req.body;
+    const productId = req.params.id;
+
+    if (!rating || !comment) {
+      return res.status(400).json({ message: 'التقييم والتعليق حقول مطلوبة.' });
+    }
+
+    const review = new Review({
+      productId,
+      userId: req.user._id,
+      userName: req.user.name,
+      rating,
+      comment
+    });
+
+    await review.save();
+    res.status(201).json({ success: true, message: 'تمت إضافة تقييمك بنجاح!', review });
+
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({ message: 'لقد قمت بتقييم هذا المنتج مسبقاً.' });
+    }
+    console.error('Error creating review:', error);
+    res.status(500).json({ message: 'حدث خطأ أثناء إضافة التقييم.' });
+  }
+});
+
+// 3. جلب متوسط التقييمات لكل المنتجات (للصفحة الرئيسية)
+app.get('/api/products/ratings', async (req, res) => {
+  try {
+    const stats = await Review.aggregate([
+      { $group: { _id: '$productId', average: { $avg: '$rating' }, count: { $sum: 1 } } }
+    ]);
+    const ratingsMap = stats.reduce((acc, stat) => { acc[stat._id] = stat; return acc; }, {});
+    res.json(ratingsMap);
+  } catch (error) {
+    console.error('Error fetching ratings stats:', error);
+    res.status(500).json({ message: 'Error fetching ratings stats.' });
   }
 });
 
