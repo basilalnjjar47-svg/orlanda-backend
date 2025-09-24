@@ -535,7 +535,7 @@ app.get('/api/reviews/latest', async (req, res) => {
   try {
     const latestReviews = await Review.find({})
       .sort({ createdAt: -1 })
-      .limit(3) // جلب أحدث 3 تقييمات
+      .limit(4) // تم التعديل لجلب أحدث 4 تقييمات
       .populate('userId', 'picture'); // جلب صورة المستخدم
 
     res.json(latestReviews);
