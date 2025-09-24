@@ -408,7 +408,7 @@ app.post('/api/orders', getUserFromToken, async (req, res) => {
 
     const newOrder = new Order({ userId: req.user._id, products, totalAmount });
     await newOrder.save();
-    res.status(201).json({ success: true, message: 'تم إنشاء طلبك بنجاح!', order: newOrder });
+    res.status(201).json({ success: true, message: 'تم إنشاء طلبك بنجاح!', orderId: newOrder._id });
   } catch (error) {
     console.error('Error creating order:', error.message);
     res.status(500).json({ message: 'حدث خطأ أثناء إنشاء الطلب.' });
