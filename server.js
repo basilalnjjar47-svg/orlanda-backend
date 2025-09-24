@@ -399,14 +399,18 @@ app.post('/api/me/delete', getUserFromToken, async (req, res) => {
 });
 app.post('/api/orders', getUserFromToken, async (req, res) => {
   try {
-    const { products, totalAmount } = req.body;
-    // التحقق من أن المنتجات موجودة وغير فارغة، وأن المبلغ الإجمالي هو رقم صالح (حتى لو كان صفراً)
-    if (!products || !Array.isArray(products) || products.length === 0 || typeof totalAmount !== 'number') {
+    // تعديل: استقبال البيانات بالأسماء التي ترسلها الواجهة الأمامية
+    const { orderItems, totalPrice } = req.body;
+
+    // التحقق من البيانات المستقبلة بالأسماء الجديدة
+    if (!orderItems || !Array.isArray(orderItems) || orderItems.length === 0 || typeof totalPrice !== 'number') {
       console.error('Incomplete order data received:', req.body); // إضافة سجل للمساعدة في تصحيح الأخطاء
       return res.status(400).json({ message: 'بيانات الطلب غير مكتملة.' });
     }
 
-    const newOrder = new Order({ userId: req.user._id, products, totalAmount });
+    // تعديل: إنشاء الطلب بالأسماء الصحيحة التي يتوقعها الموديل
+    const newOrder = new Order({ userId: req.user._id, products: orderItems, totalAmount: totalPrice });
+
     await newOrder.save();
     res.status(201).json({ success: true, message: 'تم إنشاء طلبك بنجاح!', orderId: newOrder._id });
   } catch (error) {
