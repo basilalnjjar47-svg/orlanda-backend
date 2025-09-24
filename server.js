@@ -67,6 +67,14 @@ const Otp = mongoose.model('Otp', otpSchema);
 // --- موديل الطلبات ---
 const orderSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  shippingInfo: {
+    name: { type: String, required: true },
+    email: { type: String, required: true },
+    address: { type: String, required: true },
+    city: { type: String, required: true },
+    country: { type: String, required: true },
+    phone: { type: String, required: true }
+  },
   products: [{
     productId: { type: String, required: true },
     name: { type: String, required: true },
@@ -74,6 +82,9 @@ const orderSchema = new mongoose.Schema({
     price: { type: Number, required: true },
     image: { type: String }
   }],
+  itemsPrice: { type: Number, required: true },
+  shippingPrice: { type: Number, required: true },
+  paymentMethod: { type: String, required: true },
   totalAmount: { type: Number, required: true },
   status: { type: String, default: 'قيد المعالجة', enum: ['قيد المعالجة', 'تم الشحن', 'تم التوصيل', 'ملغي'] }
 }, { timestamps: true });
@@ -399,20 +410,30 @@ app.post('/api/me/delete', getUserFromToken, async (req, res) => {
 });
 app.post('/api/orders', getUserFromToken, async (req, res) => {
   try {
-    // تعديل: استقبال البيانات بالأسماء التي ترسلها الواجهة الأمامية
-    const { orderItems, totalPrice } = req.body;
+    // تعديل: جعل الكود مرناً ليقبل الأسماء القديمة والجديدة للحقول
+    const products = req.body.products || req.body.orderItems;
+    const totalAmount = req.body.totalAmount || req.body.totalPrice;
+    const { shippingInfo, itemsPrice, shippingPrice, paymentMethod } = req.body;
 
-    // التحقق من البيانات المستقبلة بالأسماء الجديدة
-    if (!orderItems || !Array.isArray(orderItems) || orderItems.length === 0 || typeof totalPrice !== 'number') {
+    // التحقق من البيانات المستقبلة بالأسماء المرنة
+    if (!products || !Array.isArray(products) || products.length === 0 || typeof totalAmount !== 'number' || !shippingInfo) {
       console.error('Incomplete order data received:', req.body); // إضافة سجل للمساعدة في تصحيح الأخطاء
       return res.status(400).json({ message: 'بيانات الطلب غير مكتملة.' });
     }
 
-    // تعديل: إنشاء الطلب بالأسماء الصحيحة التي يتوقعها الموديل
-    const newOrder = new Order({ userId: req.user._id, products: orderItems, totalAmount: totalPrice });
+    // تعديل: إنشاء الطلب بالأسماء الصحيحة التي يتوقعها الموديل وحفظ كل البيانات
+    const newOrder = new Order({
+      userId: req.user._id,
+      products: products,
+      totalAmount: totalAmount,
+      shippingInfo,
+      itemsPrice,
+      shippingPrice,
+      paymentMethod
+    });
 
     await newOrder.save();
-    res.status(201).json({ success: true, message: 'تم إنشاء طلبك بنجاح!', orderId: newOrder._id });
+    res.status(201).json({ success: true, message: 'تم إنشاء طلبك بنجاح!', order: newOrder });
   } catch (error) {
     console.error('Error creating order:', error.message);
     res.status(500).json({ message: 'حدث خطأ أثناء إنشاء الطلب.' });
