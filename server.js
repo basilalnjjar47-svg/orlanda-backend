@@ -19,14 +19,7 @@ const FRONTEND_URL = 'https://tubular-cannoli-1e7789.netlify.app';
 const BACKEND_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
 
 // --- Middleware ---
-const corsOptions = {
-  origin: FRONTEND_URL,
-  methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-  optionsSuccessStatus: 200
-};
-app.use(cors(corsOptions));
+app.use(cors()); // Enables CORS for all origins with default options (origin: '*')
 app.use(express.json());
 
 // --- تحميل بيانات الاعتماد من بيئة الاستضافة ---
