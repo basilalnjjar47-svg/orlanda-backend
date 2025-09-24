@@ -400,7 +400,12 @@ app.post('/api/me/delete', getUserFromToken, async (req, res) => {
 app.post('/api/orders', getUserFromToken, async (req, res) => {
   try {
     const { products, totalAmount } = req.body;
-    if (!products || products.length === 0 || !totalAmount) return res.status(400).json({ message: 'بيانات الطلب غير مكتملة.' });
+    // التحقق من أن المنتجات موجودة وغير فارغة، وأن المبلغ الإجمالي هو رقم صالح (حتى لو كان صفراً)
+    if (!products || !Array.isArray(products) || products.length === 0 || typeof totalAmount !== 'number') {
+      console.error('Incomplete order data received:', req.body); // إضافة سجل للمساعدة في تصحيح الأخطاء
+      return res.status(400).json({ message: 'بيانات الطلب غير مكتملة.' });
+    }
+
     const newOrder = new Order({ userId: req.user._id, products, totalAmount });
     await newOrder.save();
     res.status(201).json({ success: true, message: 'تم إنشاء طلبك بنجاح!', order: newOrder });
